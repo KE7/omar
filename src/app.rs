@@ -2,8 +2,6 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::thread;
-use std::time::Duration;
 
 use crate::config::Config;
 use crate::manager::MANAGER_SESSION;
@@ -221,34 +219,16 @@ impl App {
             return Ok(());
         }
 
-        // Start manager session
+        // Build command with EA system prompt + memory baked in
+        let cmd = crate::manager::build_ea_command(&self.default_command);
+
+        // Start manager session — system prompt set at process start
         let workdir = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| ".".to_string());
 
         self.client
-            .new_session(MANAGER_SESSION, &self.default_command, Some(&workdir))?;
-
-        // Give it time to start
-        thread::sleep(Duration::from_secs(2));
-
-        // Build full prompt: EA system prompt + persistent memory
-        let mut full_prompt = crate::manager::MANAGER_SYSTEM_PROMPT.to_string();
-        let mem = memory::load_memory();
-        if !mem.is_empty() {
-            full_prompt.push_str(&format!(
-                "\n\n---\n\nHere is the current OMAR state from your last session:\n\n{}",
-                mem
-            ));
-        }
-
-        // Send concatenated prompt
-        self.client
-            .send_keys_literal(MANAGER_SESSION, &full_prompt)?;
-
-        // Small delay to ensure prompt is fully received before pressing Enter
-        thread::sleep(Duration::from_millis(200));
-        self.client.send_keys(MANAGER_SESSION, "C-m")?;
+            .new_session(MANAGER_SESSION, &cmd, Some(&workdir))?;
 
         // Write memory after creating manager
         memory::write_memory(&self.agents, None, &self.client);
