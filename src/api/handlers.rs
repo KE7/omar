@@ -129,6 +129,96 @@ pub async fn get_agent(
     }
 }
 
+/// GET /api/agents/:id/summary
+pub async fn get_agent_summary(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<Json<AgentSummaryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let mut app = state.app.lock().await;
+
+    if let Err(e) = app.refresh() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to refresh: {}", e),
+            }),
+        ));
+    }
+
+    let prefix = app.client().prefix().to_string();
+    let full_id = resolve_session_name(&prefix, &id);
+
+    // Find agent
+    let agent = app
+        .agents()
+        .iter()
+        .find(|a| a.session.name == full_id)
+        .or_else(|| {
+            app.manager()
+                .filter(|m| m.session.name == full_id || m.session.name == id)
+        });
+
+    match agent {
+        Some(a) => {
+            let session = a.session.name.clone();
+            let health = a.health.as_str().to_string();
+
+            let tasks = memory::load_worker_tasks();
+            let task = tasks.get(&session).cloned();
+
+            let status = memory::load_agent_status(&session);
+
+            let parents = memory::load_agent_parents();
+            let children: Vec<String> = parents
+                .iter()
+                .filter(|(_, parent)| **parent == session)
+                .map(|(child, _)| display_name(&prefix, child).to_string())
+                .collect();
+
+            Ok(Json(AgentSummaryResponse {
+                id: display_name(&prefix, &session).to_string(),
+                health,
+                task,
+                status,
+                children,
+            }))
+        }
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Agent '{}' not found", id),
+            }),
+        )),
+    }
+}
+
+/// PUT /api/agents/:id/status
+pub async fn update_agent_status(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateStatusRequest>,
+) -> Result<Json<StatusResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let app = state.app.lock().await;
+    let prefix = app.client().prefix().to_string();
+    let session_name = resolve_session_name(&prefix, &id);
+
+    if !app.client().has_session(&session_name).unwrap_or(false) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Agent '{}' not found", id),
+            }),
+        ));
+    }
+
+    memory::save_agent_status(&session_name, &req.status);
+
+    Ok(Json(StatusResponse {
+        status: "updated".to_string(),
+        message: Some(format!("Status updated for '{}'", id)),
+    }))
+}
+
 /// POST /api/agents
 pub async fn spawn_agent(
     State(state): State<Arc<ApiState>>,
@@ -244,6 +334,26 @@ pub async fn spawn_agent(
         });
     }
 
+    // Schedule a recurring status-prompt event for PMs
+    if is_pm {
+        let short_name = display_name(&prefix, &name).to_string();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        let interval: u64 = 60_000_000_000; // 60 seconds
+        let event = ScheduledEvent {
+            id: uuid::Uuid::new_v4().to_string(),
+            sender: "omar".to_string(),
+            receiver: short_name,
+            timestamp: now + interval,
+            payload: "[STATUS CHECK] Update your status via the API: curl -X PUT http://localhost:9876/api/agents/<YOUR NAME>/status -H 'Content-Type: application/json' -d '{\"status\": \"<1-line status>\"}'".to_string(),
+            created_at: now,
+            recurring_ns: Some(interval),
+        };
+        state.scheduler.insert(event);
+    }
+
     let short = display_name(&prefix, &name).to_string();
     Ok(Json(SpawnAgentResponse {
         id: short,
@@ -292,8 +402,10 @@ pub async fn kill_agent(
         ));
     }
 
-    // Clean up parent mapping for the killed agent
+    // Clean up parent mapping and cancel pending events for the killed agent
     memory::remove_agent_parent(&session_name);
+    let short_name = display_name(&prefix, &session_name).to_string();
+    state.scheduler.cancel_by_receiver(&short_name);
 
     Ok(Json(StatusResponse {
         status: "killed".to_string(),
@@ -423,6 +535,7 @@ pub async fn schedule_event(
         timestamp: req.timestamp,
         payload: req.payload,
         created_at: now,
+        recurring_ns: req.recurring_ns,
     };
 
     state.scheduler.insert(event);

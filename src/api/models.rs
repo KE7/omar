@@ -103,6 +103,24 @@ pub struct ListProjectsResponse {
     pub projects: Vec<ProjectResponse>,
 }
 
+/// Request to update an agent's status
+#[derive(Debug, Deserialize)]
+pub struct UpdateStatusRequest {
+    pub status: String,
+}
+
+/// Agent summary response (lightweight card info)
+#[derive(Debug, Serialize)]
+pub struct AgentSummaryResponse {
+    pub id: String,
+    pub health: String,
+    pub task: Option<String>,
+    /// Self-reported status from ~/.omar/status/<session>.md
+    pub status: Option<String>,
+    /// Direct child agent names
+    pub children: Vec<String>,
+}
+
 // ── Event Scheduler models ──
 
 /// Request to schedule a new event
@@ -113,6 +131,8 @@ pub struct ScheduleEventRequest {
     /// Unix epoch nanoseconds, absolute
     pub timestamp: u64,
     pub payload: String,
+    /// If set, the event re-schedules itself at `now + recurring_ns` after each delivery.
+    pub recurring_ns: Option<u64>,
 }
 
 /// Response after scheduling an event

@@ -86,6 +86,16 @@ Summary:
 
 The Executive Assistant watches for `[PROJECT COMPLETE]` to know you are done.
 
+## Status Reporting
+
+OMAR sends you a periodic `[STATUS CHECK]` event every 60 seconds. When you receive one, update your status via the API:
+```bash
+curl -X PUT http://localhost:9876/api/agents/<YOUR NAME>/status \
+  -H "Content-Type: application/json" \
+  -d '{"status": "Managing N workers: <brief project status>"}'
+```
+Also update proactively after spawning workers or reaching a milestone.
+
 ## Example
 
 YOUR TASK: Build a REST API with authentication

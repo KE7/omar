@@ -39,12 +39,13 @@ impl TickerBuffer {
         });
     }
 
-    /// Return the joined ticker content, pruning entries older than `ttl`.
+    /// Return the joined ticker content, filtering entries older than `ttl`.
+    /// Does NOT prune the buffer — old entries remain for `latest()` / debug console.
     pub fn render(&self, ttl: std::time::Duration) -> String {
-        let mut buf = self.entries.lock().unwrap();
+        let buf = self.entries.lock().unwrap();
         let now = Instant::now();
-        buf.retain(|e| now.duration_since(e.created_at) < ttl);
         buf.iter()
+            .filter(|e| now.duration_since(e.created_at) < ttl)
             .map(|e| e.text.as_str())
             .collect::<Vec<_>>()
             .join(" +++ ")
@@ -123,6 +124,23 @@ impl Scheduler {
     pub fn peek_next_timestamp(&self) -> Option<u64> {
         let queue = self.queue.lock().unwrap();
         queue.peek().map(|e| e.timestamp)
+    }
+
+    /// Cancel all events for a given receiver. Returns the number cancelled.
+    pub fn cancel_by_receiver(&self, receiver: &str) -> usize {
+        let mut queue = self.queue.lock().unwrap();
+        let events: Vec<ScheduledEvent> = queue.drain().collect();
+        let mut count = 0;
+        let mut remaining = BinaryHeap::new();
+        for ev in events {
+            if ev.receiver == receiver {
+                count += 1;
+            } else {
+                remaining.push(ev);
+            }
+        }
+        *queue = remaining;
+        count
     }
 
     /// Pop all events matching the given receiver and timestamp.
@@ -240,6 +258,22 @@ pub async fn run_event_loop(scheduler: Arc<Scheduler>, ticker: TickerBuffer) {
                     let message = format_delivery(&batch, earliest_ts);
                     deliver_to_tmux(receiver, &message, &ticker);
 
+                    // Re-insert recurring events with a fresh timestamp and ID
+                    for ev in &batch {
+                        if let Some(interval) = ev.recurring_ns {
+                            let next = ScheduledEvent {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                sender: ev.sender.clone(),
+                                receiver: ev.receiver.clone(),
+                                timestamp: now_ns() + interval,
+                                payload: ev.payload.clone(),
+                                created_at: now_ns(),
+                                recurring_ns: Some(interval),
+                            };
+                            scheduler.insert(next);
+                        }
+                    }
+
                     let lag_ns = now_ns().saturating_sub(earliest_ts);
                     let lag_ms = lag_ns as f64 / 1_000_000.0;
                     ticker.push(format!(
@@ -266,6 +300,7 @@ mod tests {
             timestamp,
             payload: payload.to_string(),
             created_at: now_ns(),
+            recurring_ns: None,
         }
     }
 
@@ -331,6 +366,30 @@ mod tests {
 
         // Remaining: bob@200 and carol@100
         assert_eq!(sched.list().len(), 2);
+    }
+
+    #[test]
+    fn test_cancel_by_receiver() {
+        let sched = Scheduler::new();
+        sched.insert(make_event("bob", "alice", 100, "a"));
+        sched.insert(make_event("bob", "carol", 200, "b"));
+        sched.insert(make_event("carol", "alice", 300, "c"));
+        sched.insert(make_event("bob", "dave", 400, "d"));
+
+        let cancelled = sched.cancel_by_receiver("bob");
+        assert_eq!(cancelled, 3);
+        let remaining = sched.list();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].receiver, "carol");
+    }
+
+    #[test]
+    fn test_cancel_by_receiver_none() {
+        let sched = Scheduler::new();
+        sched.insert(make_event("bob", "alice", 100, "a"));
+        let cancelled = sched.cancel_by_receiver("nobody");
+        assert_eq!(cancelled, 0);
+        assert_eq!(sched.list().len(), 1);
     }
 
     #[test]
@@ -442,6 +501,7 @@ mod tests {
             timestamp: 1,
             payload: "cycle-delivery-payload".to_string(),
             created_at: now_ns(),
+            recurring_ns: None,
         };
         scheduler.insert(event);
 
