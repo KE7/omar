@@ -76,8 +76,19 @@ pub fn render(frame: &mut Frame, app: &App) {
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let (running, idle) = app.health_counts();
     let total = app.total_agents();
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
 
-    let status_text = vec![
+    let next_ea_event = app
+        .scheduled_events
+        .iter()
+        .filter(|e| e.receiver == "ea")
+        .min_by_key(|e| e.timestamp);
+    let next_event = app.scheduled_events.iter().min_by_key(|e| e.timestamp);
+
+    let mut status_text = vec![
         Span::styled(
             "One-Man Army ",
             Style::default().add_modifier(Modifier::BOLD),
@@ -91,7 +102,30 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw(" "),
         Span::styled(format!("{} Idle", idle), Style::default().fg(Color::Yellow)),
+        Span::raw(" | Events: "),
+        Span::styled(
+            format!("{}", app.scheduled_events.len()),
+            Style::default().fg(Color::Cyan),
+        ),
     ];
+
+    if let Some(event) = next_ea_event {
+        status_text.push(Span::raw(" | EA Wake: "));
+        status_text.push(Span::styled(
+            format_countdown_ns(event.timestamp, now_ns),
+            Style::default().fg(Color::Magenta),
+        ));
+    } else if let Some(event) = next_event {
+        status_text.push(Span::raw(" | Next Event: "));
+        status_text.push(Span::styled(
+            format!(
+                "{} ({})",
+                truncate_str(&event.receiver, 10),
+                format_countdown_ns(event.timestamp, now_ns)
+            ),
+            Style::default().fg(Color::Magenta),
+        ));
+    }
 
     let status_line = Line::from(status_text);
 
@@ -264,13 +298,71 @@ fn render_focus_parent(frame: &mut Frame, app: &App, area: Rect) {
             .unwrap_or_default();
 
         // Parse ANSI codes and convert to ratatui text
-        let content = match ansi_to_tui::IntoText::into_text(&output) {
+        let mut content = match ansi_to_tui::IntoText::into_text(&output) {
             Ok(text) => text,
             Err(_) => {
                 let plain = strip_ansi(&output);
                 ratatui::text::Text::raw(plain)
             }
         };
+
+        let focus_short = app
+            .focus_parent
+            .strip_prefix(app.client().prefix())
+            .unwrap_or(&app.focus_parent);
+        if focus_short.starts_with("pm-") {
+            let now_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let workers = app.focus_children();
+            let running_workers = workers
+                .iter()
+                .filter(|a| matches!(a.health, HealthState::Running))
+                .count();
+            let next_pm_wake = app
+                .scheduled_events
+                .iter()
+                .filter(|e| e.receiver == app.focus_parent)
+                .min_by_key(|e| e.timestamp);
+
+            let indicator = if let Some(event) = next_pm_wake {
+                Line::from(vec![
+                    Span::styled("PM Wake: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        format_countdown_ns(event.timestamp, now_ns),
+                        Style::default().fg(Color::Magenta),
+                    ),
+                    Span::raw(" | "),
+                    Span::styled(
+                        format!("Workers running: {}", running_workers),
+                        Style::default().fg(Color::Green),
+                    ),
+                    Span::raw(" | "),
+                    Span::styled("ETA unknown", Style::default().fg(Color::DarkGray)),
+                ])
+            } else if !workers.is_empty() {
+                Line::from(vec![
+                    Span::styled("PM Wake: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("not scheduled", Style::default().fg(Color::Yellow)),
+                    Span::raw(" | "),
+                    Span::styled(
+                        format!("Workers running: {}", running_workers),
+                        Style::default().fg(Color::Green),
+                    ),
+                    Span::raw(" | "),
+                    Span::styled("ETA unknown", Style::default().fg(Color::DarkGray)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("PM status: ", Style::default().fg(Color::Cyan)),
+                    Span::styled("no workers", Style::default().fg(Color::DarkGray)),
+                ])
+            };
+
+            content.lines.insert(0, indicator);
+            content.lines.insert(1, Line::from(""));
+        }
 
         // Calculate scroll to show bottom of content
         let content_height = content.lines.len() as u16;
@@ -927,6 +1019,23 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         format!("{}…", &s[..max_len - 1])
     } else {
         s.to_string()
+    }
+}
+
+fn format_countdown_ns(target_ns: u64, now_ns: u64) -> String {
+    if target_ns <= now_ns {
+        return "due now".to_string();
+    }
+
+    let total_secs = (target_ns - now_ns) / 1_000_000_000;
+    let hours = total_secs / 3600;
+    let mins = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
+
+    if hours > 0 {
+        format!("in {}:{:02}:{:02}", hours, mins, secs)
+    } else {
+        format!("in {:02}:{:02}", mins, secs)
     }
 }
 
