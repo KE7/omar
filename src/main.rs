@@ -266,7 +266,7 @@ fn setup_tmux() -> Result<()> {
             let already_on = std::process::Command::new("tmux")
                 .args(["show-options", "-gv", opt])
                 .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string() == "on")
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "on")
                 .unwrap_or(false);
             if !already_on {
                 to_add.push((line, desc));
