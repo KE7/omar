@@ -686,6 +686,8 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw(":New "),
         Span::styled("d", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(":Kill "),
+        Span::styled("z", Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(":Hold the line "),
         Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(":Quit "),
     ];
