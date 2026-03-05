@@ -494,7 +494,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
                         continue;
                     }
 
-                    // Handle confirmation dialog
+                    // Handle kill confirmation dialog
                     if app.show_confirm_kill {
                         match key.code {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -509,6 +509,19 @@ async fn run_dashboard(config: Config) -> Result<()> {
                         continue;
                     }
 
+                    // Handle quit confirmation dialog
+                    if app.show_confirm_quit {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                app.should_quit = true;
+                            }
+                            _ => {
+                                app.show_confirm_quit = false;
+                            }
+                        }
+                        continue;
+                    }
+
                     // Handle help popup
                     if app.show_help {
                         app.show_help = false;
@@ -518,7 +531,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
                     // Handle events popup
                     if app.show_events {
                         match key.code {
-                            KeyCode::Esc | KeyCode::Char('e') | KeyCode::Char('q') => {
+                            KeyCode::Esc | KeyCode::Char('e') => {
                                 app.show_events = false;
                             }
                             _ => {}
@@ -529,7 +542,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
                     // Handle debug console popup
                     if app.show_debug_console {
                         match key.code {
-                            KeyCode::Esc | KeyCode::Char('D') | KeyCode::Char('q') => {
+                            KeyCode::Esc | KeyCode::Char('D') => {
                                 app.show_debug_console = false;
                             }
                             _ => {}
@@ -539,13 +552,11 @@ async fn run_dashboard(config: Config) -> Result<()> {
 
                     // Normal key handling
                     match key.code {
-                        KeyCode::Char('q') => {
-                            app.should_quit = true;
+                        KeyCode::Char('Q') => {
+                            app.show_confirm_quit = true;
                         }
                         KeyCode::Esc => {
-                            if !app.drill_up() {
-                                app.should_quit = true;
-                            }
+                            app.drill_up();
                         }
                         KeyCode::Tab | KeyCode::Right => {
                             app.drill_down();
@@ -554,7 +565,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
                             app.drill_up();
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.should_quit = true;
+                            app.show_confirm_quit = true;
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             app.next();

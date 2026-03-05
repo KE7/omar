@@ -60,6 +60,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_confirm_kill(frame, app);
     }
 
+    if app.show_confirm_quit {
+        render_confirm_quit(frame);
+    }
+
     if app.project_input_mode {
         render_project_input(frame, app);
     }
@@ -688,7 +692,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw(":Kill "),
         Span::styled("z", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(":Hold the line "),
-        Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("Q", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(":Quit "),
     ];
     if !at_root {
@@ -824,6 +828,46 @@ fn render_confirm_kill(frame: &mut Frame, app: &App) {
 
     let block = Block::default()
         .title(" Confirm ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red));
+
+    let paragraph = Paragraph::new(content)
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Center);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(paragraph, area);
+}
+
+fn render_confirm_quit(frame: &mut Frame) {
+    let area = centered_rect(50, 20, frame.area());
+
+    let content = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Quit omar?",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "This will kill the EA session.",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(
+            "Press z to walk away instead.",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("y", Style::default().fg(Color::Green)),
+            Span::raw(": Yes, quit  "),
+            Span::styled("n", Style::default().fg(Color::Red)),
+            Span::raw(": Cancel"),
+        ]),
+    ];
+
+    let block = Block::default()
+        .title(" Confirm Quit ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Red));
 

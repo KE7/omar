@@ -61,6 +61,7 @@ pub struct App {
     pub should_quit: bool,
     pub show_help: bool,
     pub show_confirm_kill: bool,
+    pub show_confirm_quit: bool,
     pub filter: String,
     pub status_message: Option<String>,
     pub projects: Vec<Project>,
@@ -100,6 +101,7 @@ impl App {
             should_quit: false,
             show_help: false,
             show_confirm_kill: false,
+            show_confirm_quit: false,
             filter: String::new(),
             status_message: None,
             projects: projects::load_projects(),
@@ -127,6 +129,7 @@ impl App {
     pub fn has_popup(&self) -> bool {
         self.show_help
             || self.show_confirm_kill
+            || self.show_confirm_quit
             || self.project_input_mode
             || self.show_events
             || self.show_debug_console
