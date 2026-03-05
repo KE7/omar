@@ -594,17 +594,22 @@ fn render_summary_card(
             if remaining.is_empty() || w == 0 {
                 break;
             }
-            if remaining.len() <= w {
-                wrapped.push(remaining.to_string());
-                remaining = "";
-            } else {
-                // Try to break at a word boundary
-                let break_at = remaining[..w]
-                    .rfind(' ')
-                    .map(|i| i + 1) // include the space on the current line
-                    .unwrap_or(w);
-                wrapped.push(remaining[..break_at].trim_end().to_string());
-                remaining = &remaining[break_at..];
+            // Find byte offset of the w-th character (single pass)
+            match remaining.char_indices().nth(w) {
+                None => {
+                    // Entire remaining string fits within width
+                    wrapped.push(remaining.to_string());
+                    remaining = "";
+                }
+                Some((byte_w, _)) => {
+                    // Try to break at a word boundary
+                    let break_at = remaining[..byte_w]
+                        .rfind(' ')
+                        .map(|i| i + 1) // include the space on the current line
+                        .unwrap_or(byte_w);
+                    wrapped.push(remaining[..break_at].trim_end().to_string());
+                    remaining = &remaining[break_at..];
+                }
             }
         }
 
@@ -644,11 +649,7 @@ fn render_summary_card(
                 } else {
                     // Last line: truncate with ellipsis
                     let w = if is_first { first_width } else { cont_width };
-                    let truncated = if text.len() > w.saturating_sub(3) && w > 3 {
-                        format!("{}...", &text[..w - 3])
-                    } else {
-                        format!("{}...", text)
-                    };
+                    let truncated = truncate_str(text, w);
                     if is_first {
                         lines.push(Line::from(vec![
                             Span::styled(label, Style::default().fg(Color::Cyan)),
@@ -926,11 +927,7 @@ fn render_events_popup(frame: &mut Frame, app: &App) {
             };
 
             // Truncate payload to fit
-            let payload = if event.payload.len() > 30 {
-                format!("{}...", &event.payload[..27])
-            } else {
-                event.payload.clone()
-            };
+            let payload = truncate_str(&event.payload, 30);
 
             lines.push(Line::from(vec![
                 Span::styled(
@@ -1014,11 +1011,22 @@ fn render_debug_console(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
+/// Truncate a string to at most `max_len` display characters (not bytes),
+/// appending "..." if truncated. Requires max_len >= 4 to truncate.
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}…", &s[..max_len - 1])
-    } else {
-        s.to_string()
+    if max_len < 4 {
+        return s.to_string();
+    }
+    match s.char_indices().nth(max_len) {
+        None => s.to_string(), // fits
+        Some(_) => {
+            let end = s
+                .char_indices()
+                .nth(max_len - 3)
+                .map(|(i, _)| i)
+                .unwrap_or(s.len());
+            format!("{}...", &s[..end])
+        }
     }
 }
 
