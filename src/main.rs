@@ -1,5 +1,6 @@
 mod api;
 mod app;
+mod computer;
 mod config;
 mod event;
 mod manager;
@@ -236,6 +237,44 @@ fn spawn_slack_bridge() -> Option<std::process::Child> {
     }
 }
 
+/// Locate the `omar-computer` binary. Checks next to the current executable
+/// first, then falls back to a PATH lookup.
+fn find_computer_binary() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join("omar-computer");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    // Fall back to PATH lookup
+    Some(PathBuf::from("omar-computer"))
+}
+
+/// Spawn the computer-use bridge binary if DISPLAY is set (X11 available).
+fn spawn_computer_bridge() -> Option<std::process::Child> {
+    if std::env::var("DISPLAY").is_err() {
+        return None;
+    }
+
+    let binary = find_computer_binary()?;
+    match std::process::Command::new(&binary)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => {
+            eprintln!("[omar] Computer bridge started (pid {})", child.id());
+            Some(child)
+        }
+        Err(e) => {
+            eprintln!("[omar] Failed to start computer bridge: {}", e);
+            None
+        }
+    }
+}
+
 /// Kill a child process gracefully: SIGTERM first, then SIGKILL after timeout.
 fn kill_child_gracefully(child: &mut std::process::Child, timeout: Duration) {
     // Send SIGTERM
@@ -281,6 +320,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
         let api_state = Arc::new(api::handlers::ApiState {
             app: Arc::new(Mutex::new(App::new(&config, ticker.clone()))),
             scheduler: scheduler.clone(),
+            computer_lock: computer::new_lock(),
         });
         tokio::spawn(async move {
             if let Err(e) = api::start_server(api_state, &api_config).await {
@@ -292,6 +332,9 @@ async fn run_dashboard(config: Config) -> Result<()> {
     // Spawn Slack bridge if configured
     let mut slack_bridge = spawn_slack_bridge();
 
+    // Spawn computer-use bridge if X11 is available
+    let mut computer_bridge = spawn_computer_bridge();
+
     // Initialize terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -302,9 +345,12 @@ async fn run_dashboard(config: Config) -> Result<()> {
     // Create app for dashboard (separate instance)
     let mut app = App::new(&config, ticker);
 
-    // Show Slack bridge status
-    if slack_bridge.is_some() {
-        app.set_status("Slack bridge started");
+    // Show bridge status
+    match (slack_bridge.is_some(), computer_bridge.is_some()) {
+        (true, true) => app.set_status("Slack & computer bridges started"),
+        (true, false) => app.set_status("Slack bridge started"),
+        (false, true) => app.set_status("Computer bridge started"),
+        _ => {}
     }
 
     // Initial refresh
@@ -532,6 +578,11 @@ async fn run_dashboard(config: Config) -> Result<()> {
 
     // Kill Slack bridge on exit
     if let Some(ref mut child) = slack_bridge {
+        kill_child_gracefully(child, Duration::from_secs(3));
+    }
+
+    // Kill computer bridge on exit
+    if let Some(ref mut child) = computer_bridge {
         kill_child_gracefully(child, Duration::from_secs(3));
     }
 
