@@ -13,13 +13,14 @@ use crate::tmux::HealthState;
 
 /// Render the entire dashboard
 pub fn render(frame: &mut Frame, app: &App) {
+    let status_height = if app.status_message.is_some() { 4 } else { 3 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),      // Status bar
-            Constraint::Percentage(55), // Agent grid + projects sidebar
-            Constraint::Min(8),         // Manager panel (~33%)
-            Constraint::Length(1),      // Help bar
+            Constraint::Length(status_height), // Status bar (taller when warning shown)
+            Constraint::Percentage(55),        // Agent grid + projects sidebar
+            Constraint::Min(8),                // Manager panel (~33%)
+            Constraint::Length(1),             // Help bar
         ])
         .split(frame.area());
 

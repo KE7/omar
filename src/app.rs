@@ -72,6 +72,8 @@ pub struct App {
     pub pending_confirm: Option<ConfirmAction>,
     pub filter: String,
     pub status_message: Option<String>,
+    /// Warning that persists across tick clears (e.g., tmux misconfiguration)
+    pub persistent_warning: Option<String>,
     pub projects: Vec<Project>,
     pub project_input_mode: bool,
     pub project_input: String,
@@ -111,6 +113,7 @@ impl App {
             pending_confirm: None,
             filter: String::new(),
             status_message: None,
+            persistent_warning: None,
             projects: projects::load_projects(),
             project_input_mode: false,
             project_input: String::new(),
@@ -630,9 +633,16 @@ impl App {
         self.status_message = Some(msg.into());
     }
 
-    /// Clear status message
+    /// Set a persistent warning that survives clear_status() calls
+    pub fn set_persistent_warning(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        self.persistent_warning = Some(msg.clone());
+        self.status_message = Some(msg);
+    }
+
+    /// Clear status message (persistent warnings are restored)
     pub fn clear_status(&mut self) {
-        self.status_message = None;
+        self.status_message = self.persistent_warning.clone();
     }
 
     /// Get counts by health state: (running, idle)

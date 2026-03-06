@@ -446,7 +446,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
 
     // Warn if tmux config is missing recommended settings
     if tmux_setup_needed() {
-        app.set_status("⚠ tmux not configured for omar — run 'omar setup-tmux' to fix");
+        app.set_persistent_warning("⚠ tmux not configured for omar — run 'omar setup-tmux' to fix");
     }
 
     // Initial refresh
