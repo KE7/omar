@@ -579,21 +579,17 @@ pub async fn cancel_event(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.scheduler.cancel(&id) {
-        Some(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!(EventCancelResponse {
-                status: "cancelled".to_string(),
-                id,
-            })),
-        ),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!(ErrorResponse {
-                error: format!("Event '{}' not found", id),
-            })),
-        ),
-    }
+    let status = match state.scheduler.cancel(&id) {
+        Some(_) => "cancelled",
+        None => "not_found",
+    };
+    (
+        StatusCode::OK,
+        Json(EventCancelResponse {
+            status: status.to_string(),
+            id,
+        }),
+    )
 }
 
 // ── Computer Use handlers ──

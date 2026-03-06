@@ -322,8 +322,10 @@ async fn run_dashboard(config: Config) -> Result<()> {
     // Start API server if enabled
     if config.api.enabled {
         let api_config = config.api.clone();
+        let mut api_app = App::new(&config, ticker.clone());
+        api_app.set_readonly();
         let api_state = Arc::new(api::handlers::ApiState {
-            app: Arc::new(Mutex::new(App::new(&config, ticker.clone()))),
+            app: Arc::new(Mutex::new(api_app)),
             scheduler: scheduler.clone(),
             computer_lock: computer::new_lock(),
         });

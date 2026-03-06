@@ -29,16 +29,9 @@ fn tmux(args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// Clean up any test sessions
-fn cleanup_test_sessions() {
-    // List all sessions and kill ones with our test prefix
-    if let Ok(output) = tmux(&["list-sessions", "-F", "#{session_name}"]) {
-        for line in output.lines() {
-            if line.starts_with(TEST_PREFIX) {
-                let _ = tmux(&["kill-session", "-t", line]);
-            }
-        }
-    }
+/// Clean up a specific test session (safe for parallel test execution)
+fn cleanup_session(name: &str) {
+    let _ = tmux(&["kill-session", "-t", name]);
 }
 
 /// Check if tmux is available
@@ -65,9 +58,8 @@ fn test_create_and_list_session() {
         return;
     }
 
-    cleanup_test_sessions();
-
     let session_name = format!("{}create-list", TEST_PREFIX);
+    cleanup_session(&session_name);
 
     // Create a session
     let result = tmux(&["new-session", "-d", "-s", &session_name, "sleep", "60"]);
@@ -95,9 +87,8 @@ fn test_capture_pane() {
         return;
     }
 
-    cleanup_test_sessions();
-
     let session_name = format!("{}capture", TEST_PREFIX);
+    cleanup_session(&session_name);
 
     // Create a session with a shell
     let result = tmux(&["new-session", "-d", "-s", &session_name]);
@@ -137,9 +128,8 @@ fn test_kill_session() {
         return;
     }
 
-    cleanup_test_sessions();
-
     let session_name = format!("{}kill", TEST_PREFIX);
+    cleanup_session(&session_name);
 
     // Create a session
     let _ = tmux(&["new-session", "-d", "-s", &session_name, "sleep", "60"]);
@@ -170,9 +160,8 @@ fn test_session_activity() {
         return;
     }
 
-    cleanup_test_sessions();
-
     let session_name = format!("{}activity", TEST_PREFIX);
+    cleanup_session(&session_name);
 
     // Create a session
     let _ = tmux(&["new-session", "-d", "-s", &session_name, "sleep", "60"]);
@@ -202,9 +191,8 @@ fn test_has_session() {
         return;
     }
 
-    cleanup_test_sessions();
-
     let session_name = format!("{}has-session", TEST_PREFIX);
+    cleanup_session(&session_name);
 
     // Check non-existent session
     let result = Command::new("tmux")
@@ -235,9 +223,8 @@ fn test_send_keys() {
         return;
     }
 
-    cleanup_test_sessions();
-
     let session_name = format!("{}send-keys", TEST_PREFIX);
+    cleanup_session(&session_name);
 
     // Create a session with a shell
     let _ = tmux(&["new-session", "-d", "-s", &session_name]);
@@ -278,9 +265,8 @@ fn test_spawn_custom_command() {
         return;
     }
 
-    cleanup_test_sessions();
-
     let session_name = format!("{}custom-cmd", TEST_PREFIX);
+    cleanup_session(&session_name);
 
     // Spawn a session with a non-claude command (simulates opencode or other backend)
     let result = tmux(&["new-session", "-d", "-s", &session_name, "bash"]);
@@ -346,8 +332,6 @@ fn test_omar_list_empty() {
         return;
     }
 
-    cleanup_test_sessions();
-
     let output = Command::new("cargo")
         .args(["run", "--", "list"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -370,13 +354,11 @@ fn test_omar_spawn_and_kill() {
         return;
     }
 
-    cleanup_test_sessions();
-
     // Default prefix is "omar-agent-", so session name = "omar-agent-test-spawn"
     let full_session = "omar-agent-test-spawn";
 
     // Clean up from previous test runs
-    let _ = tmux(&["kill-session", "-t", full_session]);
+    cleanup_session(full_session);
 
     // Spawn a new agent
     let output = Command::new("cargo")

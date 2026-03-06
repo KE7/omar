@@ -730,7 +730,7 @@ fn render_help_bar(frame: &mut Frame, app: &App, area: Rect) {
     help_text.push(Span::raw(":New EA "));
     if app.eas.len() > 1 {
         help_text.push(Span::styled(
-            "[/]",
+            "[ ]",
             Style::default().add_modifier(Modifier::BOLD),
         ));
         help_text.push(Span::raw(":Cycle EA "));

@@ -98,6 +98,10 @@ pub struct App {
     default_command: String,
     default_workdir: String,
     session_prefix: String,
+    /// When true, `refresh` will auto-start missing EA manager sessions.
+    /// Should be false for read-only App instances (e.g. the API) to avoid
+    /// a TOCTOU race with the dashboard's App instance.
+    auto_start_managers: bool,
 }
 
 impl App {
@@ -151,7 +155,14 @@ impl App {
             default_command: config.agent.default_command.clone(),
             default_workdir: config.agent.default_workdir.clone(),
             session_prefix: config.dashboard.session_prefix.clone(),
+            auto_start_managers: true,
         }
+    }
+
+    /// Mark this App as read-only: it will not auto-start EA manager sessions.
+    /// Use for the API instance to avoid racing with the dashboard.
+    pub fn set_readonly(&mut self) {
+        self.auto_start_managers = false;
     }
 
     /// Active EA context (shorthand)
@@ -196,8 +207,10 @@ impl App {
             }
         }
 
-        // Start any EA managers not yet running (using the session list we already have)
-        self.ensure_managers(&manager_map)?;
+        // Start any EA managers not yet running (only from the dashboard instance)
+        if self.auto_start_managers {
+            self.ensure_managers(&manager_map)?;
+        }
 
         // Update managers for all EAs
         self.managers = self
