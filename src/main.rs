@@ -79,6 +79,9 @@ enum Commands {
         #[command(subcommand)]
         action: Option<ManagerAction>,
     },
+
+    /// Configure tmux for optimal omar experience
+    SetupTmux,
 }
 
 #[derive(Subcommand)]
@@ -109,6 +112,7 @@ async fn main() -> Result<()> {
         }
         Some(Commands::List) => list_agents(&client),
         Some(Commands::Kill { name }) => kill_agent(&client, &name),
+        Some(Commands::SetupTmux) => setup_tmux(),
         Some(Commands::Manager { action }) => match action {
             Some(ManagerAction::Start) | None => {
                 manager::start_manager(&client, &config.agent.default_command)
@@ -197,6 +201,139 @@ fn relaunch_in_tmux() -> Result<()> {
     // exec() replaces the current process; only returns on error
     let err = cmd.exec();
     anyhow::bail!("Failed to launch tmux: {}", err)
+}
+
+/// Recommended tmux settings for omar, keyed by option name.
+const TMUX_RECOMMENDED: &[(&str, &str, &str)] = &[
+    ("mouse", "set -g mouse on", "mouse scrolling and selection"),
+    (
+        "extended-keys",
+        "set -g extended-keys on",
+        "Shift+Enter in agents",
+    ),
+    (
+        "set-clipboard",
+        "set -g set-clipboard on",
+        "clipboard integration",
+    ),
+];
+
+/// Additional raw lines that need to appear in tmux.conf (checked by substring).
+const TMUX_EXTRA_LINES: &[(&str, &str, &str)] = &[
+    (
+        "terminal-features',*:extkeys'",
+        "set -as terminal-features ',*:extkeys'",
+        "extended key passthrough",
+    ),
+    (
+        "terminal-features',*:clipboard'",
+        "set -as terminal-features ',*:clipboard'",
+        "clipboard passthrough",
+    ),
+];
+
+/// Check if any recommended tmux settings are missing.
+fn tmux_setup_needed() -> bool {
+    for &(opt, _, _) in TMUX_RECOMMENDED {
+        if let Ok(out) = std::process::Command::new("tmux")
+            .args(["show-options", "-gv", opt])
+            .output()
+        {
+            let val = String::from_utf8_lossy(&out.stdout);
+            if val.trim() != "on" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Interactive tmux configuration setup.
+fn setup_tmux() -> Result<()> {
+    use std::io::Write;
+
+    let conf_path = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".tmux.conf");
+
+    let existing = std::fs::read_to_string(&conf_path).unwrap_or_default();
+
+    // Collect missing settings
+    let mut to_add: Vec<(&str, &str)> = Vec::new();
+
+    for &(opt, line, desc) in TMUX_RECOMMENDED {
+        if !existing.contains(line) {
+            // Also check if the option is already set at runtime
+            let already_on = std::process::Command::new("tmux")
+                .args(["show-options", "-gv", opt])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "on")
+                .unwrap_or(false);
+            if !already_on {
+                to_add.push((line, desc));
+            }
+        }
+    }
+
+    let normalized = existing.replace(' ', "");
+    for &(needle, line, desc) in TMUX_EXTRA_LINES {
+        if !normalized.contains(needle) {
+            to_add.push((line, desc));
+        }
+    }
+
+    if to_add.is_empty() {
+        println!("✓ tmux is already configured for omar.");
+        return Ok(());
+    }
+
+    println!(
+        "The following settings will be added to {}:\n",
+        conf_path.display()
+    );
+    for (line, desc) in &to_add {
+        println!("  {}  # {}", line, desc);
+    }
+
+    print!("\nApply? [Y/n] ");
+    std::io::stdout().flush()?;
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+
+    if !input.is_empty() && input != "y" && input != "yes" {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    // Append to tmux.conf
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&conf_path)?;
+
+    writeln!(file, "\n# omar recommended settings")?;
+    for (line, _) in &to_add {
+        writeln!(file, "{}", line)?;
+    }
+
+    // Apply to running tmux server
+    if std::process::Command::new("tmux")
+        .args(["list-sessions"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        let _ = std::process::Command::new("tmux")
+            .args(["source-file", &conf_path.to_string_lossy()])
+            .status();
+        println!("✓ Applied to ~/.tmux.conf and reloaded tmux.");
+    } else {
+        println!("✓ Applied to ~/.tmux.conf (tmux not running, will take effect next session).");
+    }
+
+    Ok(())
 }
 
 /// Locate the `omar-slack` binary. Checks next to the current executable
@@ -353,6 +490,11 @@ async fn run_dashboard(config: Config) -> Result<()> {
         _ => {}
     }
 
+    // Warn if tmux config is missing recommended settings
+    if tmux_setup_needed() {
+        app.set_persistent_warning("⚠ tmux not configured for omar — run 'omar setup-tmux' to fix");
+    }
+
     // Initial refresh
     if let Err(e) = app.refresh() {
         app.set_status(format!("Error: {}", e));
@@ -397,16 +539,21 @@ async fn run_dashboard(config: Config) -> Result<()> {
                         continue;
                     }
 
-                    // Handle confirmation dialog
-                    if app.show_confirm_kill {
+                    // Handle confirmation dialog (kill or quit)
+                    if let Some(action) = app.pending_confirm {
                         match key.code {
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                if let Err(e) = app.kill_selected() {
-                                    app.set_status(format!("Error: {}", e));
+                            KeyCode::Char('y') | KeyCode::Char('Y') => match action {
+                                app::ConfirmAction::Kill => {
+                                    if let Err(e) = app.kill_selected() {
+                                        app.set_status(format!("Error: {}", e));
+                                    }
                                 }
-                            }
+                                app::ConfirmAction::Quit => {
+                                    app.should_quit = true;
+                                }
+                            },
                             _ => {
-                                app.show_confirm_kill = false;
+                                app.pending_confirm = None;
                             }
                         }
                         continue;
@@ -421,7 +568,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
                     // Handle events popup
                     if app.show_events {
                         match key.code {
-                            KeyCode::Esc | KeyCode::Char('e') | KeyCode::Char('q') => {
+                            KeyCode::Esc | KeyCode::Char('e') => {
                                 app.show_events = false;
                             }
                             _ => {}
@@ -432,7 +579,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
                     // Handle debug console popup
                     if app.show_debug_console {
                         match key.code {
-                            KeyCode::Esc | KeyCode::Char('D') | KeyCode::Char('q') => {
+                            KeyCode::Esc | KeyCode::Char('D') => {
                                 app.show_debug_console = false;
                             }
                             _ => {}
@@ -442,13 +589,11 @@ async fn run_dashboard(config: Config) -> Result<()> {
 
                     // Normal key handling
                     match key.code {
-                        KeyCode::Char('q') => {
-                            app.should_quit = true;
+                        KeyCode::Char('Q') => {
+                            app.pending_confirm = Some(app::ConfirmAction::Quit);
                         }
                         KeyCode::Esc => {
-                            if !app.drill_up() {
-                                app.should_quit = true;
-                            }
+                            app.drill_up();
                         }
                         KeyCode::Tab | KeyCode::Right => {
                             app.drill_down();
@@ -457,7 +602,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
                             app.drill_up();
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.should_quit = true;
+                            app.pending_confirm = Some(app::ConfirmAction::Quit);
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             app.next();
@@ -508,7 +653,7 @@ async fn run_dashboard(config: Config) -> Result<()> {
                         }
                         KeyCode::Char('d') => {
                             if app.selected_agent().is_some() {
-                                app.show_confirm_kill = true;
+                                app.pending_confirm = Some(app::ConfirmAction::Kill);
                             }
                         }
                         KeyCode::Char('p') => {
@@ -528,6 +673,14 @@ async fn run_dashboard(config: Config) -> Result<()> {
                         }
                         KeyCode::Char('D') => {
                             app.show_debug_console = true;
+                        }
+                        KeyCode::Char('z') => {
+                            // Detach from tmux — dashboard + agents keep running
+                            if std::env::var("TMUX").is_ok() {
+                                let _ = std::process::Command::new("tmux")
+                                    .args(["detach-client"])
+                                    .status();
+                            }
                         }
                         KeyCode::Char('?') => {
                             app.show_help = !app.show_help;
